@@ -1,15 +1,16 @@
 package mr
 
-import "log"
-import "net"
-import "os"
-import "net/rpc"
-import "net/http"
-
+import (
+	"log"
+	"net"
+	"net/http"
+	"net/rpc"
+	"os"
+)
 
 type Coordinator struct {
 	// Your definitions here.
-
+	files []string
 }
 
 // Your code here -- RPC handlers for the worker to call.
@@ -21,7 +22,6 @@ func (c *Coordinator) Example(args *ExampleArgs, reply *ExampleReply) error {
 	reply.Y = args.X + 1
 	return nil
 }
-
 
 // start a thread that listens for RPCs from worker.go
 func (c *Coordinator) server(sockname string) {
@@ -42,7 +42,6 @@ func (c *Coordinator) Done() bool {
 
 	// Your code here.
 
-
 	return ret
 }
 
@@ -50,11 +49,11 @@ func (c *Coordinator) Done() bool {
 // main/mrcoordinator.go calls this function.
 // nReduce is the number of reduce tasks to use.
 func MakeCoordinator(sockname string, files []string, nReduce int) *Coordinator {
-	c := Coordinator{}
+	c := Coordinator{
+		files: files,
+	}
 
 	// Your code here.
-
-
 	c.server(sockname)
 	return &c
 }

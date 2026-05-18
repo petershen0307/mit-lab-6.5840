@@ -20,4 +20,24 @@ type ExampleReply struct {
 }
 
 // Add your RPC definitions here.
+type MessageType string
 
+const (
+	RequestTask  MessageType = "RequestTask"
+	FinishedTask MessageType = "FinishedTask"
+)
+
+type MessageArgs struct {
+	X int
+}
+
+type ExecType string
+
+const (
+	Map    ExecType = "MAP"
+	Reduce ExecType = "REDUCE"
+)
+
+type MessageReply struct {
+	ExecType ExecType
+}
