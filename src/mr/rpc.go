@@ -20,24 +20,36 @@ type ExampleReply struct {
 }
 
 // Add your RPC definitions here.
-type MessageType string
+
+type TaskState string
 
 const (
-	RequestTask  MessageType = "RequestTask"
-	FinishedTask MessageType = "FinishedTask"
+	// ready -> running
+	// running -> failed
+	// running -> finished
+	// failed -> running
+	Ready    TaskState = "ready"
+	Running  TaskState = "running"
+	Failed   TaskState = "failed"
+	Finished TaskState = "finished"
+)
+
+type TaskType string
+
+const (
+	Map    TaskType = "MAP"
+	Reduce TaskType = "REDUCE"
 )
 
 type MessageArgs struct {
-	X int
+	TaskID   int
+	State    TaskState
+	ExecType TaskType
 }
 
-type ExecType string
-
-const (
-	Map    ExecType = "MAP"
-	Reduce ExecType = "REDUCE"
-)
-
 type MessageReply struct {
-	ExecType ExecType
+	TaskID        int
+	ExecType      TaskType
+	FileName      string
+	ReduceBuckets int
 }
