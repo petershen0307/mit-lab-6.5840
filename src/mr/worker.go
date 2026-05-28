@@ -1,6 +1,7 @@
 package mr
 
 import (
+	"encoding/json"
 	"fmt"
 	"hash/fnv"
 	"log"
@@ -31,9 +32,9 @@ func Worker(sockname string, mapf func(string, string) []KeyValue,
 	coordSockName = sockname
 
 	// Your worker implementation here.
-
+	Run(mapf, reducef)
 	// uncomment to send the Example RPC to the coordinator.
-	CallExample()
+	// CallExample()
 
 }
 
@@ -61,6 +62,65 @@ func CallExample() {
 		fmt.Printf("reply.Y %v\n", reply.Y)
 	} else {
 		fmt.Printf("call failed!\n")
+	}
+}
+
+func Run(
+	mapf func(string, string) []KeyValue,
+	reducef func(string, []string) string,
+) {
+	args := MessageArgs{}
+	reply := MessageReply{}
+	for call("Coordinator.MR", &args, &reply) {
+		args = MessageArgs{
+			TaskID:   reply.TaskID,
+			ExecType: reply.ExecType,
+		}
+		switch reply.ExecType {
+		case Map:
+			// read the file from reply
+			b, err := os.ReadFile(reply.FileName)
+			if err != nil {
+				log.Println("can't open the file", reply.FileName)
+				args.State = Failed
+				continue
+			}
+			// output to mr-X-Y
+			outputGroupByXY := map[string]*os.File{}
+			kvs := mapf("not in use", string(b))
+			for _, kv := range kvs {
+				fileName := fmt.Sprintf("mr-%d-%d", reply.TaskID, ihash(kv.Key)%reply.ReduceBuckets)
+				if v, ok := outputGroupByXY[fileName]; ok {
+					if json.NewEncoder(v).Encode(map[string]string{
+						kv.Key: kv.Value,
+					}) != nil {
+						log.Println("write file failed", fileName)
+						args.State = Failed
+						break
+					}
+				} else {
+					f, err := os.OpenFile(fileName, os.O_TRUNC|os.O_CREATE, os.ModePerm)
+					if err != nil {
+						log.Println("file create failed", fileName)
+						args.State = Failed
+						break
+					}
+					outputGroupByXY[fileName] = f
+				}
+			}
+			// close the files
+			for _, f := range outputGroupByXY {
+				_ = f.Close()
+			}
+			if args.State != "" {
+				args.State = Finished
+			}
+		case Reduce:
+			// output to mr-out-Y
+		default:
+			log.Println("leave")
+			return
+		}
 	}
 }
 

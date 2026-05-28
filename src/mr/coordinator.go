@@ -62,14 +62,12 @@ func (c *Coordinator) MR(args *MessageArgs, reply *MessageReply) error {
 	c.lock.Lock()
 	defer c.lock.Unlock()
 	if len(c.queue) == 0 {
-		// reply nil mean no task now
-		reply = nil
 		return nil
 	}
 
-	// args is nil, it mean request a task from worker
-	// args is not nil, it mean worker report the task status
-	if args == nil && reply != nil {
+	// args state is empty, it mean request a task from worker
+	// args state is not empty, it mean worker report the task status
+	if args.State == "" && reply != nil {
 		*reply = <-c.queue
 		t := c.MapTasks[reply.TaskID]
 		t.LastUpdatedTime = time.Now().UTC()
