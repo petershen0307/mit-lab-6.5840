@@ -7,6 +7,7 @@ import (
 	"log"
 	"net/rpc"
 	"os"
+	"regexp"
 )
 
 // Map functions return a slice of KeyValue.
@@ -65,6 +66,11 @@ func CallExample() {
 	}
 }
 
+type KV struct {
+	K string
+	V string
+}
+
 func Run(
 	mapf func(string, string) []KeyValue,
 	reducef func(string, []string) string,
@@ -90,15 +96,7 @@ func Run(
 			kvs := mapf("not in use", string(b))
 			for _, kv := range kvs {
 				fileName := fmt.Sprintf("mr-%d-%d", reply.TaskID, ihash(kv.Key)%reply.ReduceBuckets)
-				if v, ok := outputGroupByXY[fileName]; ok {
-					if json.NewEncoder(v).Encode(map[string]string{
-						kv.Key: kv.Value,
-					}) != nil {
-						log.Println("write file failed", fileName)
-						args.State = Failed
-						break
-					}
-				} else {
+				if _, ok := outputGroupByXY[fileName]; !ok {
 					f, err := os.OpenFile(fileName, os.O_TRUNC|os.O_CREATE, os.ModePerm)
 					if err != nil {
 						log.Println("file create failed", fileName)
@@ -106,6 +104,13 @@ func Run(
 						break
 					}
 					outputGroupByXY[fileName] = f
+				}
+				if json.NewEncoder(outputGroupByXY[fileName]).Encode(KV{
+					K: kv.Key, V: kv.Value,
+				}) != nil {
+					log.Println("write file failed", fileName)
+					args.State = Failed
+					break
 				}
 			}
 			// close the files
@@ -117,6 +122,43 @@ func Run(
 			}
 		case Reduce:
 			// output to mr-out-Y
+			// read all mr-*-Y files
+			dirs, err := os.ReadDir("./")
+			if err != nil {
+				args.State = Failed
+				return
+			}
+			r := make(map[string]int)
+			for _, d := range dirs {
+				if d.IsDir() {
+					continue
+				}
+				if b, _ := regexp.MatchString(fmt.Sprintf(`mr-\d{1}-%d`, reply.TaskID), d.Name()); !b {
+					continue
+				}
+				f, err := os.OpenFile(d.Name(), os.O_RDONLY, os.ModePerm)
+				if err != nil {
+					log.Println("file create failed", d.Name())
+					args.State = Failed
+					return
+				}
+				reader := json.NewDecoder(f)
+				kv := KV{}
+				for reader.Decode(&kv) != nil {
+					r[kv.K] += 1
+				}
+				f.Close()
+			}
+			outf, err := os.OpenFile(fmt.Sprintf("mr-out-%d", reply.TaskID), os.O_TRUNC|os.O_CREATE, os.ModePerm)
+			if err != nil {
+				args.State = Failed
+				return
+			}
+			if json.NewEncoder(outf).Encode(r) != nil {
+				args.State = Failed
+				return
+			}
+			args.State = Finished
 		default:
 			log.Println("leave")
 			return
