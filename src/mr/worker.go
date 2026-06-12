@@ -127,11 +127,14 @@ func Run(
 				return
 			}
 			r := make(map[string]int)
+			regexStr := fmt.Sprintf(`mr-\d{1}-%d`, getTaskOutput.TaskID)
+			log.Println("[reduce] regex", regexStr)
 			for _, d := range dirs {
 				if d.IsDir() {
 					continue
 				}
-				if b, _ := regexp.MatchString(fmt.Sprintf(`mr-\d{1}-%d`, getTaskOutput.TaskID), d.Name()); !b {
+				if b, _ := regexp.MatchString(regexStr, d.Name()); !b {
+					log.Println("[reduce] skip mr file:", d.Name())
 					continue
 				}
 				f, err := os.OpenFile(d.Name(), os.O_RDONLY, os.ModePerm)
@@ -141,8 +144,9 @@ func Run(
 					return
 				}
 				reader := json.NewDecoder(f)
-				kv := KV{}
-				for reader.Decode(&kv) != nil {
+				for reader.More() {
+					kv := KV{}
+					reader.Decode(&kv)
 					r[kv.K] += 1
 				}
 				f.Close()
