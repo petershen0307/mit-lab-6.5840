@@ -41,26 +41,26 @@ func Worker(sockname string, mapf func(string, string) []KeyValue,
 
 // example function to show how to make an RPC call to the coordinator.
 //
-// the RPC argument and reply types are defined in rpc.go.
+// the RPC argument and getTaskOutput types are defined in rpc.go.
 func CallExample() {
 
 	// declare an argument structure.
-	args := ExampleArgs{}
+	reportTaskInput := ExampleArgs{}
 
 	// fill in the argument(s).
-	args.X = 99
+	reportTaskInput.X = 99
 
-	// declare a reply structure.
-	reply := ExampleReply{}
+	// declare a getTaskOutput structure.
+	getTaskOutput := ExampleReply{}
 
-	// send the RPC request, wait for the reply.
+	// send the RPC request, wait for the getTaskOutput.
 	// the "Coordinator.Example" tells the
 	// receiving server that we'd like to call
 	// the Example() method of struct Coordinator.
-	ok := call("Coordinator.Example", &args, &reply)
+	ok := call("Coordinator.Example", &reportTaskInput, &getTaskOutput)
 	if ok {
-		// reply.Y should be 100.
-		fmt.Printf("reply.Y %v\n", reply.Y)
+		// getTaskOutput.Y should be 100.
+		fmt.Printf("getTaskOutput.Y %v\n", getTaskOutput.Y)
 	} else {
 		fmt.Printf("call failed!\n")
 	}
@@ -75,32 +75,33 @@ func Run(
 	mapf func(string, string) []KeyValue,
 	reducef func(string, []string) string,
 ) {
-	args := MessageArgs{}
-	reply := MessageReply{}
-	for call("Coordinator.MR", &args, &reply) {
-		args = MessageArgs{
-			TaskID:   reply.TaskID,
-			ExecType: reply.ExecType,
+	for {
+		getTaskOutput := GetTaskOutput{}
+		call("Coordinator.GetTask", &GetTaskInput{}, &getTaskOutput)
+		reportTaskInput := ReportTaskInput{
+			TaskID:   getTaskOutput.TaskID,
+			ExecType: getTaskOutput.ExecType,
+			State:    Finished,
 		}
-		switch reply.ExecType {
+		switch getTaskOutput.ExecType {
 		case Map:
-			// read the file from reply
-			b, err := os.ReadFile(reply.FileName)
+			// read the file from getTaskOutput
+			b, err := os.ReadFile(getTaskOutput.FileName)
 			if err != nil {
-				log.Println("can't open the file", reply.FileName)
-				args.State = Failed
+				log.Println("can't open the file", getTaskOutput.FileName)
+				reportTaskInput.State = Failed
 				continue
 			}
 			// output to mr-X-Y
 			outputGroupByXY := map[string]*os.File{}
 			kvs := mapf("not in use", string(b))
 			for _, kv := range kvs {
-				fileName := fmt.Sprintf("mr-%d-%d", reply.TaskID, ihash(kv.Key)%reply.ReduceBuckets)
+				fileName := fmt.Sprintf("mr-%d-%d", getTaskOutput.TaskID, ihash(kv.Key)%getTaskOutput.ReduceBuckets)
 				if _, ok := outputGroupByXY[fileName]; !ok {
-					f, err := os.OpenFile(fileName, os.O_TRUNC|os.O_CREATE, os.ModePerm)
+					f, err := os.OpenFile(fileName, os.O_TRUNC|os.O_CREATE|os.O_WRONLY, os.FileMode(0o666))
 					if err != nil {
 						log.Println("file create failed", fileName)
-						args.State = Failed
+						reportTaskInput.State = Failed
 						break
 					}
 					outputGroupByXY[fileName] = f
@@ -109,7 +110,7 @@ func Run(
 					K: kv.Key, V: kv.Value,
 				}) != nil {
 					log.Println("write file failed", fileName)
-					args.State = Failed
+					reportTaskInput.State = Failed
 					break
 				}
 			}
@@ -117,15 +118,12 @@ func Run(
 			for _, f := range outputGroupByXY {
 				_ = f.Close()
 			}
-			if args.State != "" {
-				args.State = Finished
-			}
 		case Reduce:
 			// output to mr-out-Y
 			// read all mr-*-Y files
 			dirs, err := os.ReadDir("./")
 			if err != nil {
-				args.State = Failed
+				reportTaskInput.State = Failed
 				return
 			}
 			r := make(map[string]int)
@@ -133,13 +131,13 @@ func Run(
 				if d.IsDir() {
 					continue
 				}
-				if b, _ := regexp.MatchString(fmt.Sprintf(`mr-\d{1}-%d`, reply.TaskID), d.Name()); !b {
+				if b, _ := regexp.MatchString(fmt.Sprintf(`mr-\d{1}-%d`, getTaskOutput.TaskID), d.Name()); !b {
 					continue
 				}
 				f, err := os.OpenFile(d.Name(), os.O_RDONLY, os.ModePerm)
 				if err != nil {
 					log.Println("file create failed", d.Name())
-					args.State = Failed
+					reportTaskInput.State = Failed
 					return
 				}
 				reader := json.NewDecoder(f)
@@ -149,20 +147,21 @@ func Run(
 				}
 				f.Close()
 			}
-			outf, err := os.OpenFile(fmt.Sprintf("mr-out-%d", reply.TaskID), os.O_TRUNC|os.O_CREATE, os.ModePerm)
+			outf, err := os.OpenFile(fmt.Sprintf("mr-out-%d", getTaskOutput.TaskID), os.O_TRUNC|os.O_CREATE|os.O_WRONLY, os.FileMode(0o666))
 			if err != nil {
-				args.State = Failed
+				reportTaskInput.State = Failed
 				return
 			}
 			if json.NewEncoder(outf).Encode(r) != nil {
-				args.State = Failed
+				reportTaskInput.State = Failed
 				return
 			}
-			args.State = Finished
+			reportTaskInput.State = Finished
 		default:
 			log.Println("leave")
 			return
 		}
+		call("Coordinator.ReportTask", &reportTaskInput, &ReportTaskOutput{})
 	}
 }
 

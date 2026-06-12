@@ -41,15 +41,16 @@ const (
 	Reduce TaskType = "REDUCE"
 )
 
-type MessageArgs struct {
-	TaskID   int
-	State    TaskState
-	ExecType TaskType
-}
-
-type MessageReply struct {
+type GetTaskInput struct{}
+type GetTaskOutput struct {
 	TaskID        int
 	ExecType      TaskType
 	FileName      string
 	ReduceBuckets int
 }
+type ReportTaskInput struct {
+	TaskID   int
+	State    TaskState
+	ExecType TaskType
+}
+type ReportTaskOutput struct{}

@@ -32,7 +32,7 @@ type Task struct {
 type Coordinator struct {
 	// Your definitions here.
 	lock          sync.Mutex
-	queue         chan MessageReply
+	queue         chan GetTaskOutput
 	reduceBuckets int
 	MapTasks      map[int]Task
 	ReduceTasks   map[int]Task
@@ -48,7 +48,7 @@ func (c *Coordinator) Example(args *ExampleArgs, reply *ExampleReply) error {
 	return nil
 }
 
-func (c *Coordinator) updateTask(id int, state TaskState, tasks map[int]Task, failedReplay MessageReply) {
+func (c *Coordinator) updateTask(id int, state TaskState, tasks map[int]Task, failedReplay GetTaskOutput) {
 	t := tasks[id]
 	t.State = state
 	t.LastUpdatedTime = time.Now().UTC()
@@ -58,35 +58,43 @@ func (c *Coordinator) updateTask(id int, state TaskState, tasks map[int]Task, fa
 	}
 }
 
-func (c *Coordinator) MR(args *MessageArgs, reply *MessageReply) error {
+/*
+Refactor
+[v] 1. separate MR() to GetTask and ReportTask()
+2. [MAP] write file format to Key Value and the key should be sorted
+3. [REDUCE] collect file start with the smallest file index
+4. user priority queue(heap) as the queue, heap can help us to maintain the queue order
+*/
+
+func (c *Coordinator) GetTask(input *GetTaskInput, output *GetTaskOutput) error {
 	c.lock.Lock()
 	defer c.lock.Unlock()
 	if len(c.queue) == 0 {
 		return nil
 	}
+	*output = <-c.queue
+	t := c.MapTasks[output.TaskID]
+	t.LastUpdatedTime = time.Now().UTC()
+	t.State = Running
+	c.MapTasks[output.TaskID] = t
+	return nil
+}
 
-	// args state is empty, it mean request a task from worker
-	// args state is not empty, it mean worker report the task status
-	if args.State == "" && reply != nil {
-		*reply = <-c.queue
-		t := c.MapTasks[reply.TaskID]
-		t.LastUpdatedTime = time.Now().UTC()
-		t.State = Running
-		c.MapTasks[reply.TaskID] = t
+func (c *Coordinator) ReportTask(input *ReportTaskInput, output *ReportTaskOutput) error {
+	c.lock.Lock()
+	defer c.lock.Unlock()
+	if input.ExecType == Map {
+		c.updateTask(input.TaskID, input.State, c.MapTasks, GetTaskOutput{
+			TaskID:        input.TaskID,
+			ExecType:      Map,
+			FileName:      c.MapTasks[input.TaskID].FileName,
+			ReduceBuckets: c.reduceBuckets,
+		})
 	} else {
-		if args.ExecType == Map {
-			c.updateTask(args.TaskID, args.State, c.MapTasks, MessageReply{
-				TaskID:        args.TaskID,
-				ExecType:      Map,
-				FileName:      c.MapTasks[args.TaskID].FileName,
-				ReduceBuckets: c.reduceBuckets,
-			})
-		} else {
-			c.updateTask(args.TaskID, args.State, c.ReduceTasks, MessageReply{
-				TaskID:   args.TaskID,
-				ExecType: Reduce,
-			})
-		}
+		c.updateTask(input.TaskID, input.State, c.ReduceTasks, GetTaskOutput{
+			TaskID:   input.TaskID,
+			ExecType: Reduce,
+		})
 	}
 	return nil
 }
@@ -130,7 +138,7 @@ func (c *Coordinator) Done() bool {
 	// all map task done, produce reduce task
 	if len(tMap) == 0 && len(tReduce) != 0 {
 		for i := range c.reduceBuckets {
-			c.queue <- MessageReply{
+			c.queue <- GetTaskOutput{
 				TaskID:   i,
 				ExecType: Reduce,
 			}
@@ -147,14 +155,14 @@ func MakeCoordinator(sockname string, files []string, nReduce int) *Coordinator 
 	// Your code here.
 
 	c := Coordinator{
-		queue:         make(chan MessageReply, max(len(files), nReduce)), // ensure channel size is enough
+		queue:         make(chan GetTaskOutput, max(len(files), nReduce)), // ensure channel size is enough
 		MapTasks:      make(map[int]Task),
 		ReduceTasks:   make(map[int]Task),
 		reduceBuckets: nReduce,
 	}
 
 	for n, file := range files {
-		c.queue <- MessageReply{
+		c.queue <- GetTaskOutput{
 			TaskID:        n,
 			FileName:      file,
 			ExecType:      Map,
