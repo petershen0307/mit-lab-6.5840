@@ -84,7 +84,7 @@ func (c *Coordinator) GetTask(input *GetTaskInput, output *GetTaskOutput) error 
 	if c.pqueue.Len() == 0 {
 		return nil
 	}
-	*output = c.pqueue.Pop().(*QueueItem).value
+	*output = heap.Pop(&(c.pqueue)).(*QueueItem).value
 	t := c.MapTasks[output.TaskID]
 	t.LastUpdatedTime = time.Now().UTC()
 	t.State = Running
@@ -145,18 +145,19 @@ func MakeCoordinator(sockname string, files []string, nReduce int) *Coordinator 
 		reduceBuckets: nReduce,
 	}
 
-	heap.Init(&c.pqueue)
+	heap.Init(&(c.pqueue))
 
 	for n, file := range files {
-		c.pqueue.Push(&QueueItem{
-			value: GetTaskOutput{
-				TaskID:        n,
-				FileName:      file,
-				ExecType:      Map,
-				ReduceBuckets: nReduce,
-			},
-			priority: MapPriority,
-		})
+		heap.Push(&(c.pqueue),
+			&QueueItem{
+				value: GetTaskOutput{
+					TaskID:        n,
+					FileName:      file,
+					ExecType:      Map,
+					ReduceBuckets: nReduce,
+				},
+				priority: MapPriority,
+			})
 		c.MapTasks[n] = Task{
 			FileName:        file,
 			State:           Ready,
@@ -165,7 +166,7 @@ func MakeCoordinator(sockname string, files []string, nReduce int) *Coordinator 
 	}
 	// initial reduce task map
 	for i := range nReduce {
-		c.pqueue.Push(&QueueItem{
+		heap.Push(&(c.pqueue), &QueueItem{
 			value: GetTaskOutput{
 				TaskID:   i,
 				ExecType: Reduce,
@@ -177,7 +178,6 @@ func MakeCoordinator(sockname string, files []string, nReduce int) *Coordinator 
 			LastUpdatedTime: time.Now().UTC(),
 		}
 	}
-
 	c.server(sockname)
 	return &c
 }

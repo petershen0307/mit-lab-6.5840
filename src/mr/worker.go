@@ -1,13 +1,15 @@
 package mr
 
 import (
-	"encoding/json"
+	"bufio"
 	"fmt"
 	"hash/fnv"
 	"log"
 	"net/rpc"
 	"os"
 	"regexp"
+	"slices"
+	"strings"
 )
 
 // Map functions return a slice of KeyValue.
@@ -33,10 +35,26 @@ func Worker(sockname string, mapf func(string, string) []KeyValue,
 	coordSockName = sockname
 
 	// Your worker implementation here.
-	Run(mapf, reducef)
-	// uncomment to send the Example RPC to the coordinator.
-	// CallExample()
-
+	for {
+		getTaskOutput := GetTaskOutput{}
+		call("Coordinator.GetTask", &GetTaskInput{}, &getTaskOutput)
+		reportTaskInput := ReportTaskInput{
+			TaskID:   getTaskOutput.TaskID,
+			ExecType: getTaskOutput.ExecType,
+			State:    Finished,
+		}
+		switch getTaskOutput.ExecType {
+		case Map:
+			reportTaskInput.State = workerDoMap(getTaskOutput, mapf)
+		case Reduce:
+			reportTaskInput.State = workerDoReduce(getTaskOutput, reducef)
+		default:
+			log.Println("leave")
+			return
+		}
+		log.Println("[Report]", getTaskOutput.ExecType, getTaskOutput.TaskID)
+		call("Coordinator.ReportTask", &reportTaskInput, &ReportTaskOutput{})
+	}
 }
 
 // example function to show how to make an RPC call to the coordinator.
@@ -71,102 +89,88 @@ type KV struct {
 	V string
 }
 
-func Run(
-	mapf func(string, string) []KeyValue,
-	reducef func(string, []string) string,
-) {
-	for {
-		getTaskOutput := GetTaskOutput{}
-		call("Coordinator.GetTask", &GetTaskInput{}, &getTaskOutput)
-		reportTaskInput := ReportTaskInput{
-			TaskID:   getTaskOutput.TaskID,
-			ExecType: getTaskOutput.ExecType,
-			State:    Finished,
-		}
-		switch getTaskOutput.ExecType {
-		case Map:
-			// read the file from getTaskOutput
-			b, err := os.ReadFile(getTaskOutput.FileName)
-			if err != nil {
-				log.Println("can't open the file", getTaskOutput.FileName)
-				reportTaskInput.State = Failed
-				continue
-			}
-			// output to mr-X-Y
-			outputGroupByXY := map[string]*os.File{}
-			kvs := mapf("not in use", string(b))
-			for _, kv := range kvs {
-				fileName := fmt.Sprintf("mr-%d-%d", getTaskOutput.TaskID, ihash(kv.Key)%getTaskOutput.ReduceBuckets)
-				if _, ok := outputGroupByXY[fileName]; !ok {
-					f, err := os.OpenFile(fileName, os.O_TRUNC|os.O_CREATE|os.O_WRONLY, os.FileMode(0o666))
-					if err != nil {
-						log.Println("file create failed", fileName)
-						reportTaskInput.State = Failed
-						break
-					}
-					outputGroupByXY[fileName] = f
-				}
-				if json.NewEncoder(outputGroupByXY[fileName]).Encode(KV{
-					K: kv.Key, V: kv.Value,
-				}) != nil {
-					log.Println("write file failed", fileName)
-					reportTaskInput.State = Failed
-					break
-				}
-			}
-			// close the files
-			for _, f := range outputGroupByXY {
-				_ = f.Close()
-			}
-		case Reduce:
-			// output to mr-out-Y
-			// read all mr-*-Y files
-			dirs, err := os.ReadDir("./")
-			if err != nil {
-				reportTaskInput.State = Failed
-				return
-			}
-			r := make(map[string]int)
-			regexStr := fmt.Sprintf(`mr-\d+-%d`, getTaskOutput.TaskID)
-			log.Println("[reduce] regex", regexStr)
-			for _, d := range dirs {
-				if d.IsDir() {
-					continue
-				}
-				if b, _ := regexp.MatchString(regexStr, d.Name()); !b {
-					log.Println("[reduce] skip mr file:", d.Name())
-					continue
-				}
-				f, err := os.OpenFile(d.Name(), os.O_RDONLY, os.ModePerm)
-				if err != nil {
-					log.Println("file create failed", d.Name())
-					reportTaskInput.State = Failed
-					return
-				}
-				reader := json.NewDecoder(f)
-				for reader.More() {
-					kv := KV{}
-					reader.Decode(&kv)
-					r[kv.K] += 1
-				}
-				f.Close()
-			}
-			outf, err := os.OpenFile(fmt.Sprintf("mr-out-%d", getTaskOutput.TaskID), os.O_TRUNC|os.O_CREATE|os.O_WRONLY, os.FileMode(0o666))
-			if err != nil {
-				reportTaskInput.State = Failed
-				return
-			}
-			if json.NewEncoder(outf).Encode(r) != nil {
-				reportTaskInput.State = Failed
-				return
-			}
-			reportTaskInput.State = Finished
-		default:
-			log.Println("leave")
-			return
-		}
-		call("Coordinator.ReportTask", &reportTaskInput, &ReportTaskOutput{})
+func workerDoMap(getTaskOutput GetTaskOutput, mapf func(string, string) []KeyValue) TaskState {
+	// read the file from getTaskOutput
+	b, err := os.ReadFile(getTaskOutput.FileName)
+	if err != nil {
+		log.Println("can't open the file", getTaskOutput.FileName)
+		return Failed
 	}
+	// output to mr-X-Y
+	// collect all intermediate files
+	intermediateFileWriterMap := map[string]*bufio.Writer{}
+	kvs := mapf("not in use", string(b))
+	slices.SortStableFunc(kvs, func(a, b KeyValue) int {
+		return strings.Compare(a.Key, b.Key)
+	})
+	for _, kv := range kvs {
+		fileName := fmt.Sprintf("mr-%d-%d", getTaskOutput.TaskID, ihash(kv.Key)%getTaskOutput.ReduceBuckets)
+		if _, ok := intermediateFileWriterMap[fileName]; !ok {
+			f, err := os.OpenFile(fileName, os.O_TRUNC|os.O_CREATE|os.O_WRONLY, os.FileMode(0o666))
+			if err != nil {
+				log.Println("file create failed", fileName)
+				return Failed
+			}
+			// registered closer
+			defer f.Close()
+			intermediateFileWriterMap[fileName] = bufio.NewWriter(f)
+		}
+		if _, err := intermediateFileWriterMap[fileName].Write(fmt.Appendln(nil, kv.Key, kv.Value)); err != nil {
+			log.Println("[MAP] write file failed", fileName, err)
+			return Failed
+		}
+	}
+	for _, writer := range intermediateFileWriterMap {
+		writer.Flush()
+	}
+	return Finished
+}
+
+func workerDoReduce(getTaskOutput GetTaskOutput, reducef func(string, []string) string) TaskState {
+	// output to mr-out-Y
+	// read all mr-*-Y files
+	dirs, err := os.ReadDir("./")
+	if err != nil {
+		return Failed
+	}
+	keyValues := make(map[string][]string)
+	regexStr := fmt.Sprintf(`mr-\d+-%d`, getTaskOutput.TaskID)
+	for _, d := range dirs {
+		if d.IsDir() {
+			continue
+		}
+		if b, _ := regexp.MatchString(regexStr, d.Name()); !b {
+			continue
+		}
+		f, err := os.OpenFile(d.Name(), os.O_RDONLY, os.ModePerm)
+		if err != nil {
+			log.Println("[REDUCE] open file failed", d.Name(), err)
+			return Failed
+		}
+		defer f.Close()
+		// file format: k v
+		reader := bufio.NewScanner(f)
+		for reader.Scan() {
+			t := strings.Split(reader.Text(), " ")
+			k, v := t[0], t[1]
+			keyValues[k] = append(keyValues[k], v)
+		}
+	}
+	outf, err := os.OpenFile(fmt.Sprintf("mr-out-%d", getTaskOutput.TaskID), os.O_TRUNC|os.O_CREATE|os.O_WRONLY, os.FileMode(0o666))
+	if err != nil {
+		log.Println("[REDUCE] create output file failed", err)
+		return Failed
+	}
+	defer outf.Close()
+	writer := bufio.NewWriter(outf)
+	for k, v := range keyValues {
+		if _, err := writer.Write(fmt.Appendln(nil, k, reducef(k, v))); err != nil {
+			log.Println("[REDUCE] write result file failed", err)
+			return Failed
+		}
+	}
+	writer.Flush()
+	return Finished
 }
 
 // send an RPC request to the coordinator, wait for the response.
