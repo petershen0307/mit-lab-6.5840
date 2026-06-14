@@ -85,10 +85,12 @@ func (c *Coordinator) GetTask(input *GetTaskInput, output *GetTaskOutput) error 
 		return nil
 	}
 	*output = heap.Pop(&(c.pqueue)).(*QueueItem).value
-	t := c.MapTasks[output.TaskID]
-	t.LastUpdatedTime = time.Now().UTC()
-	t.State = Running
-	c.MapTasks[output.TaskID] = t
+	if output.ExecType == Map {
+		c.updateTask(output.TaskID, Running, c.MapTasks, GetTaskOutput{})
+	} else {
+		c.updateTask(output.TaskID, Running, c.ReduceTasks, GetTaskOutput{})
+	}
+	log.Println("[coordinator]", output.ExecType, output.TaskID)
 	return nil
 }
 
