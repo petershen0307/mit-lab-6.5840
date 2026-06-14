@@ -99,7 +99,7 @@ func workerDoMap(getTaskOutput GetTaskOutput, mapf func(string, string) []KeyVal
 	// output to mr-X-Y
 	// collect all intermediate files
 	intermediateFileWriterMap := map[string]*bufio.Writer{}
-	kvs := mapf("not in use", string(b))
+	kvs := mapf(getTaskOutput.FileName, string(b))
 	slices.SortStableFunc(kvs, func(a, b KeyValue) int {
 		return strings.Compare(a.Key, b.Key)
 	})
@@ -152,6 +152,10 @@ func workerDoReduce(getTaskOutput GetTaskOutput, reducef func(string, []string) 
 		reader := bufio.NewScanner(f)
 		for reader.Scan() {
 			t := strings.Split(reader.Text(), " ")
+			if len(t) != 2 {
+				log.Println("[REDUCE] string split size is not 2", f.Name(), t)
+				continue
+			}
 			k, v := t[0], t[1]
 			keyValues[k] = append(keyValues[k], v)
 		}
