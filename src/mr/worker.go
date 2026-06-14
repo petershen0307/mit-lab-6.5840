@@ -10,6 +10,7 @@ import (
 	"regexp"
 	"slices"
 	"strings"
+	"time"
 )
 
 // Map functions return a slice of KeyValue.
@@ -48,11 +49,13 @@ func Worker(sockname string, mapf func(string, string) []KeyValue,
 			reportTaskInput.State = workerDoMap(getTaskOutput, mapf)
 		case Reduce:
 			reportTaskInput.State = workerDoReduce(getTaskOutput, reducef)
+		case Wait:
+			time.Sleep(10 * time.Millisecond)
 		default:
-			log.Println("leave")
+			// log.Println("leave")
 			return
 		}
-		log.Println("[Report]", getTaskOutput.ExecType, getTaskOutput.TaskID)
+		// log.Println("[Report]", getTaskOutput.ExecType, getTaskOutput.TaskID)
 		call("Coordinator.ReportTask", &reportTaskInput, &ReportTaskOutput{})
 	}
 }
@@ -93,7 +96,7 @@ func workerDoMap(getTaskOutput GetTaskOutput, mapf func(string, string) []KeyVal
 	// read the file from getTaskOutput
 	b, err := os.ReadFile(getTaskOutput.FileName)
 	if err != nil {
-		log.Println("can't open the file", getTaskOutput.FileName)
+		log.Println("[MAP] can't open the file", getTaskOutput.FileName)
 		return Failed
 	}
 	// output to mr-X-Y
@@ -108,7 +111,7 @@ func workerDoMap(getTaskOutput GetTaskOutput, mapf func(string, string) []KeyVal
 		if _, ok := intermediateFileWriterMap[fileName]; !ok {
 			f, err := os.OpenFile(fileName, os.O_TRUNC|os.O_CREATE|os.O_WRONLY, os.FileMode(0o666))
 			if err != nil {
-				log.Println("file create failed", fileName)
+				log.Println("[MAP] file create failed", fileName)
 				return Failed
 			}
 			// registered closer

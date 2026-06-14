@@ -1,7 +1,6 @@
 package mr
 
 import (
-	"container/heap"
 	"log"
 	"net"
 	"net/http"
@@ -29,18 +28,18 @@ type Task struct {
 	LastUpdatedTime time.Time
 }
 
-const (
-	MapPriority    = 2
-	ReducePriority = 1
-)
+type TaskManage struct {
+	Tasks           map[int]Task
+	RemainTaskCount int
+}
 
 type Coordinator struct {
 	// Your definitions here.
 	lock          sync.Mutex
-	pqueue        PriorityQueue
+	queue         chan GetTaskOutput
 	reduceBuckets int
-	MapTasks      map[int]Task
-	ReduceTasks   map[int]Task
+	mapTasks      TaskManage
+	reduceTasks   TaskManage
 }
 
 // Your code here -- RPC handlers for the worker to call.
@@ -53,42 +52,45 @@ func (c *Coordinator) Example(args *ExampleArgs, reply *ExampleReply) error {
 	return nil
 }
 
-func (c *Coordinator) updateTask(id int, state TaskState, tasks map[int]Task, failedReplay GetTaskOutput) {
-	t := tasks[id]
+func (c *Coordinator) updateTask(id int, state TaskState, taskM *TaskManage, failedReplay GetTaskOutput) {
+	t := taskM.Tasks[id]
 	t.State = state
 	t.LastUpdatedTime = time.Now().UTC()
-	tasks[id] = t
-	if tasks[id].State == Failed {
-		priority := ReducePriority
-		if failedReplay.ExecType == Map {
-			priority = MapPriority
-		}
-		heap.Push(&(c.pqueue), &QueueItem{
-			value:    failedReplay,
-			priority: priority,
-		})
+	taskM.Tasks[id] = t
+	switch taskM.Tasks[id].State {
+	case Failed:
+		c.queue <- failedReplay
+	case Finished:
+		taskM.RemainTaskCount--
 	}
 }
 
 /*
 Refactor
 [v] 1. separate MR() to GetTask and ReportTask()
-2. [MAP] write file format to Key Value and the key should be sorted
-3. [REDUCE] collect file start with the smallest file index
+[v] 2. [MAP] write file format to Key Value and the key should be sorted
+[v] 3. [REDUCE] collect file start with the smallest file index
 [v] 4. user priority queue(heap) as the queue, heap can help us to maintain the queue order
 */
 
 func (c *Coordinator) GetTask(input *GetTaskInput, output *GetTaskOutput) error {
 	c.lock.Lock()
 	defer c.lock.Unlock()
-	if c.pqueue.Len() == 0 {
+	if len(c.queue) == 0 && c.reduceTasks.RemainTaskCount <= 0 {
 		return nil
 	}
-	*output = heap.Pop(&(c.pqueue)).(*QueueItem).value
-	if output.ExecType == Map {
-		c.updateTask(output.TaskID, Running, c.MapTasks, GetTaskOutput{})
-	} else {
-		c.updateTask(output.TaskID, Running, c.ReduceTasks, GetTaskOutput{})
+	if len(c.queue) == 0 {
+		*output = GetTaskOutput{
+			ExecType: Wait,
+		}
+		return nil
+	}
+	*output = <-c.queue
+	switch output.ExecType {
+	case Map:
+		c.updateTask(output.TaskID, Running, &c.mapTasks, GetTaskOutput{})
+	case Reduce:
+		c.updateTask(output.TaskID, Running, &c.reduceTasks, GetTaskOutput{})
 	}
 	log.Println("[coordinator]", output.ExecType, output.TaskID)
 	return nil
@@ -97,19 +99,32 @@ func (c *Coordinator) GetTask(input *GetTaskInput, output *GetTaskOutput) error 
 func (c *Coordinator) ReportTask(input *ReportTaskInput, output *ReportTaskOutput) error {
 	c.lock.Lock()
 	defer c.lock.Unlock()
-	if input.ExecType == Map {
-		c.updateTask(input.TaskID, input.State, c.MapTasks, GetTaskOutput{
+	switch input.ExecType {
+	case Map:
+		c.updateTask(input.TaskID, input.State, &c.mapTasks, GetTaskOutput{
 			TaskID:        input.TaskID,
 			ExecType:      Map,
-			FileName:      c.MapTasks[input.TaskID].FileName,
+			FileName:      c.mapTasks.Tasks[input.TaskID].FileName,
 			ReduceBuckets: c.reduceBuckets,
 		})
-	} else {
-		c.updateTask(input.TaskID, input.State, c.ReduceTasks, GetTaskOutput{
+		// check the map task, if all map tasks are done, create the reduce task
+		log.Println(len(c.queue), cap(c.queue), input.ExecType, input.TaskID, c.mapTasks.RemainTaskCount, c.reduceTasks.RemainTaskCount)
+		if c.mapTasks.RemainTaskCount == 0 {
+			for n := range c.reduceBuckets {
+				c.queue <- GetTaskOutput{
+					TaskID:   n,
+					ExecType: Reduce,
+				}
+			}
+		}
+	case Reduce:
+		c.updateTask(input.TaskID, input.State, &c.reduceTasks, GetTaskOutput{
 			TaskID:   input.TaskID,
 			ExecType: Reduce,
 		})
+	default:
 	}
+
 	return nil
 }
 
@@ -132,7 +147,7 @@ func (c *Coordinator) Done() bool {
 	// need to check when to add reduce task to queue
 	c.lock.Lock()
 	defer c.lock.Unlock()
-	return c.pqueue.Len() == 0
+	return len(c.queue) == 0 && c.reduceTasks.RemainTaskCount <= 0
 }
 
 // create a Coordinator.
@@ -142,25 +157,26 @@ func MakeCoordinator(sockname string, files []string, nReduce int) *Coordinator 
 	// Your code here.
 
 	c := Coordinator{
-		MapTasks:      make(map[int]Task),
-		ReduceTasks:   make(map[int]Task),
+		mapTasks: TaskManage{
+			Tasks:           make(map[int]Task),
+			RemainTaskCount: len(files),
+		},
+		reduceTasks: TaskManage{
+			Tasks:           make(map[int]Task),
+			RemainTaskCount: nReduce,
+		},
 		reduceBuckets: nReduce,
+		queue:         make(chan GetTaskOutput, max(len(files), nReduce)),
 	}
 
-	heap.Init(&(c.pqueue))
-
 	for n, file := range files {
-		heap.Push(&(c.pqueue),
-			&QueueItem{
-				value: GetTaskOutput{
-					TaskID:        n,
-					FileName:      file,
-					ExecType:      Map,
-					ReduceBuckets: nReduce,
-				},
-				priority: MapPriority,
-			})
-		c.MapTasks[n] = Task{
+		c.queue <- GetTaskOutput{
+			TaskID:        n,
+			FileName:      file,
+			ExecType:      Map,
+			ReduceBuckets: nReduce,
+		}
+		c.mapTasks.Tasks[n] = Task{
 			FileName:        file,
 			State:           Ready,
 			LastUpdatedTime: time.Now().UTC(),
@@ -168,60 +184,11 @@ func MakeCoordinator(sockname string, files []string, nReduce int) *Coordinator 
 	}
 	// initial reduce task map
 	for i := range nReduce {
-		heap.Push(&(c.pqueue), &QueueItem{
-			value: GetTaskOutput{
-				TaskID:   i,
-				ExecType: Reduce,
-			},
-			priority: ReducePriority,
-		})
-		c.ReduceTasks[i] = Task{
+		c.reduceTasks.Tasks[i] = Task{
 			State:           Ready,
 			LastUpdatedTime: time.Now().UTC(),
 		}
 	}
 	c.server(sockname)
 	return &c
-}
-
-// -------------------------
-// use priority queue
-type QueueItem struct {
-	value    GetTaskOutput // The value of the item; arbitrary.
-	priority int           // The priority of the item in the queue.
-	// The index is needed by update and is maintained by the heap.Interface methods.
-	index int // The index of the item in the heap.
-}
-
-// A PriorityQueue implements heap.Interface and holds Items.
-type PriorityQueue []*QueueItem
-
-func (pq PriorityQueue) Len() int { return len(pq) }
-
-func (pq PriorityQueue) Less(i, j int) bool {
-	// We want Pop to give us the highest, not lowest, priority so we use greater than here.
-	return pq[i].priority > pq[j].priority
-}
-
-func (pq PriorityQueue) Swap(i, j int) {
-	pq[i], pq[j] = pq[j], pq[i]
-	pq[i].index = i
-	pq[j].index = j
-}
-
-func (pq *PriorityQueue) Push(x any) {
-	n := len(*pq)
-	item := x.(*QueueItem)
-	item.index = n
-	*pq = append(*pq, item)
-}
-
-func (pq *PriorityQueue) Pop() any {
-	old := *pq
-	n := len(old)
-	item := old[n-1]
-	old[n-1] = nil  // don't stop the GC from reclaiming the item eventually
-	item.index = -1 // for safety
-	*pq = old[0 : n-1]
-	return item
 }

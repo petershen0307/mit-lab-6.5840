@@ -39,6 +39,7 @@ type TaskType string
 const (
 	Map    TaskType = "MAP"
 	Reduce TaskType = "REDUCE"
+	Wait   TaskType = "WAIT"
 )
 
 type GetTaskInput struct{}
