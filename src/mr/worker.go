@@ -127,7 +127,7 @@ func Run(
 				return
 			}
 			r := make(map[string]int)
-			regexStr := fmt.Sprintf(`mr-\d{1}-%d`, getTaskOutput.TaskID)
+			regexStr := fmt.Sprintf(`mr-\d+-%d`, getTaskOutput.TaskID)
 			log.Println("[reduce] regex", regexStr)
 			for _, d := range dirs {
 				if d.IsDir() {
