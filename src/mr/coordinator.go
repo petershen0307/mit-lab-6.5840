@@ -63,7 +63,7 @@ func (c *Coordinator) updateTask(id int, state TaskState, tasks map[int]Task, fa
 		if failedReplay.ExecType == Map {
 			priority = MapPriority
 		}
-		c.pqueue.Push(&QueueItem{
+		heap.Push(&(c.pqueue), &QueueItem{
 			value:    failedReplay,
 			priority: priority,
 		})
