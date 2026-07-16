@@ -73,6 +73,14 @@ Refactor
 [v] 4. user priority queue(heap) as the queue, heap can help us to maintain the queue order
 */
 
+/*
+add the session
+task running -(didn't receive the feedback)-> task timeout
+task timeout -(new session)-> task running
+task running -(the session is correct)-> receive task report
+task running -(the session is stale)-> dorp stale task report
+*/
+
 func (c *Coordinator) GetTask(input *GetTaskInput, output *GetTaskOutput) error {
 	c.lock.Lock()
 	defer c.lock.Unlock()
