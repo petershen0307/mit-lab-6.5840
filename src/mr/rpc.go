@@ -46,8 +46,8 @@ type GetTaskInput struct{}
 type GetTaskOutput struct {
 	TaskID        int
 	ExecType      TaskType
-	FileName      string
-	ReduceBuckets int
+	FileName      string // for map task
+	ReduceBuckets int    // for map task
 }
 type ReportTaskInput struct {
 	TaskID   int

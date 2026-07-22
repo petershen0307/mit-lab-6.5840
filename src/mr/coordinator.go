@@ -1,6 +1,8 @@
 package mr
 
 import (
+	"context"
+	"io"
 	"log"
 	"net"
 	"net/http"
@@ -8,6 +10,8 @@ import (
 	"os"
 	"sync"
 	"time"
+
+	"github.com/looplab/fsm"
 )
 
 /*
@@ -23,14 +27,10 @@ Reduce state
 */
 
 type Task struct {
+	ID              int
 	FileName        string
-	State           TaskState
 	LastUpdatedTime time.Time
-}
-
-type TaskManage struct {
-	Tasks           map[int]Task
-	RemainTaskCount int
+	state           *fsm.FSM
 }
 
 type Coordinator struct {
@@ -38,8 +38,8 @@ type Coordinator struct {
 	lock          sync.Mutex
 	queue         chan GetTaskOutput
 	reduceBuckets int
-	mapTasks      TaskManage
-	reduceTasks   TaskManage
+	mapTasks      []Task
+	reduceTasks   []Task
 }
 
 // Your code here -- RPC handlers for the worker to call.
@@ -50,19 +50,6 @@ type Coordinator struct {
 func (c *Coordinator) Example(args *ExampleArgs, reply *ExampleReply) error {
 	reply.Y = args.X + 1
 	return nil
-}
-
-func (c *Coordinator) updateTask(id int, state TaskState, taskM *TaskManage, failedReplay GetTaskOutput) {
-	t := taskM.Tasks[id]
-	t.State = state
-	t.LastUpdatedTime = time.Now().UTC()
-	taskM.Tasks[id] = t
-	switch taskM.Tasks[id].State {
-	case Failed:
-		c.queue <- failedReplay
-	case Finished:
-		taskM.RemainTaskCount--
-	}
 }
 
 /*
@@ -81,58 +68,91 @@ task running -(the session is correct)-> receive task report
 task running -(the session is stale)-> dorp stale task report
 */
 
+func areDone(tasks []Task) bool {
+	b := true
+	for _, t := range tasks {
+		b = b && (t.state.Is(StateComplete) || t.state.Is(StateFailed))
+	}
+	return b
+}
+
+func arePending(tasks []Task) bool {
+	b := true
+	for _, t := range tasks {
+		b = b && t.state.Is(StatePending)
+	}
+	return b
+}
+
+func printState(tasks []Task) {
+	for _, t := range tasks {
+		log.Println(t.state.Current())
+	}
+}
+
+func updateTaskState(tasks *[]Task, id int, event string) {
+	for i, t := range *tasks {
+		if t.ID == id {
+			if err := (*tasks)[i].state.Event(context.Background(), event); err != nil {
+				log.Panicln("[coordinator] state machine failed with event", event, "and error", err)
+			}
+		}
+	}
+}
+
 func (c *Coordinator) GetTask(input *GetTaskInput, output *GetTaskOutput) error {
 	c.lock.Lock()
 	defer c.lock.Unlock()
-	if len(c.queue) == 0 && c.reduceTasks.RemainTaskCount <= 0 {
+	if len(c.queue) == 0 && areDone(c.reduceTasks) {
 		return nil
 	}
 	if len(c.queue) == 0 {
-		*output = GetTaskOutput{
+		// add the reduce task to queue
+		output = &GetTaskOutput{
 			ExecType: Wait,
 		}
 		return nil
 	}
+	log.Println("[GetTask] request task")
 	*output = <-c.queue
+	var tasks *[]Task
 	switch output.ExecType {
 	case Map:
-		c.updateTask(output.TaskID, Running, &c.mapTasks, GetTaskOutput{})
+		tasks = &c.mapTasks
 	case Reduce:
-		c.updateTask(output.TaskID, Running, &c.reduceTasks, GetTaskOutput{})
+		tasks = &c.reduceTasks
 	}
-	log.Println("[coordinator]", output.ExecType, output.TaskID)
+	// update task state to pending
+	updateTaskState(tasks, output.TaskID, EventGetTask)
+	log.Println("[GetTask]", output.ExecType, output.TaskID)
 	return nil
 }
 
 func (c *Coordinator) ReportTask(input *ReportTaskInput, output *ReportTaskOutput) error {
 	c.lock.Lock()
 	defer c.lock.Unlock()
+	var tasks *[]Task
 	switch input.ExecType {
 	case Map:
-		c.updateTask(input.TaskID, input.State, &c.mapTasks, GetTaskOutput{
-			TaskID:        input.TaskID,
-			ExecType:      Map,
-			FileName:      c.mapTasks.Tasks[input.TaskID].FileName,
-			ReduceBuckets: c.reduceBuckets,
-		})
-		// check the map task, if all map tasks are done, create the reduce task
-		log.Println(len(c.queue), cap(c.queue), input.ExecType, input.TaskID, c.mapTasks.RemainTaskCount, c.reduceTasks.RemainTaskCount)
-		if c.mapTasks.RemainTaskCount == 0 {
-			for n := range c.reduceBuckets {
-				c.queue <- GetTaskOutput{
-					TaskID:   n,
-					ExecType: Reduce,
-				}
+		tasks = &c.mapTasks
+	case Reduce:
+		tasks = &c.reduceTasks
+	}
+	event := EventReportTaskSuccess
+	if input.State == Failed {
+		event = EventReportTaskFailed
+	}
+	// update task state to pending
+	updateTaskState(tasks, input.TaskID, event)
+	log.Println("[ReportTask]", input.ExecType, input.TaskID, input.State)
+	if areDone(c.mapTasks) && arePending(c.reduceTasks) {
+		for _, t := range c.reduceTasks {
+			c.queue <- GetTaskOutput{
+				TaskID:   t.ID,
+				ExecType: Reduce,
 			}
 		}
-	case Reduce:
-		c.updateTask(input.TaskID, input.State, &c.reduceTasks, GetTaskOutput{
-			TaskID:   input.TaskID,
-			ExecType: Reduce,
-		})
-	default:
 	}
-
 	return nil
 }
 
@@ -155,7 +175,7 @@ func (c *Coordinator) Done() bool {
 	// need to check when to add reduce task to queue
 	c.lock.Lock()
 	defer c.lock.Unlock()
-	return len(c.queue) == 0 && c.reduceTasks.RemainTaskCount <= 0
+	return len(c.queue) == 0 && areDone(c.reduceTasks) && areDone(c.mapTasks)
 }
 
 // create a Coordinator.
@@ -163,16 +183,10 @@ func (c *Coordinator) Done() bool {
 // nReduce is the number of reduce tasks to use.
 func MakeCoordinator(sockname string, files []string, nReduce int) *Coordinator {
 	// Your code here.
-
+	log.SetOutput(io.Discard)
 	c := Coordinator{
-		mapTasks: TaskManage{
-			Tasks:           make(map[int]Task),
-			RemainTaskCount: len(files),
-		},
-		reduceTasks: TaskManage{
-			Tasks:           make(map[int]Task),
-			RemainTaskCount: nReduce,
-		},
+		mapTasks:      []Task{},
+		reduceTasks:   []Task{},
 		reduceBuckets: nReduce,
 		queue:         make(chan GetTaskOutput, max(len(files), nReduce)),
 	}
@@ -184,18 +198,20 @@ func MakeCoordinator(sockname string, files []string, nReduce int) *Coordinator 
 			ExecType:      Map,
 			ReduceBuckets: nReduce,
 		}
-		c.mapTasks.Tasks[n] = Task{
+		c.mapTasks = append(c.mapTasks, Task{
+			ID:              n,
 			FileName:        file,
-			State:           Ready,
 			LastUpdatedTime: time.Now().UTC(),
-		}
+			state:           newMrFsm(),
+		})
 	}
 	// initial reduce task map
 	for i := range nReduce {
-		c.reduceTasks.Tasks[i] = Task{
-			State:           Ready,
+		c.reduceTasks = append(c.reduceTasks, Task{
+			ID:              i,
 			LastUpdatedTime: time.Now().UTC(),
-		}
+			state:           newMrFsm(),
+		})
 	}
 	c.server(sockname)
 	return &c

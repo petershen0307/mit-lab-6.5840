@@ -1,2 +1,4 @@
 github.com/anishathalye/porcupine v1.0.3 h1:0V+ZTHPjWUhYhiVaksoBFKfmBvoJrM3BXLQKGqPqiHM=
 github.com/anishathalye/porcupine v1.0.3/go.mod h1:WM0SsFjWNl2Y4BqHr/E/ll2yY1GY1jqn+W7Z/84Zoog=
+github.com/looplab/fsm v1.0.3 h1:qtxBsa2onOs0qFOtkqwf5zE0uP0+Te+wlIvXctPKpcw=
+github.com/looplab/fsm v1.0.3/go.mod h1:PmD3fFvQEIsjMEfvZdrCDZ6y8VwKTwWNjlpEr6IKPO4=
