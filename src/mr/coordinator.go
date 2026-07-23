@@ -2,7 +2,6 @@ package mr
 
 import (
 	"context"
-	"io"
 	"log"
 	"net"
 	"net/http"
@@ -13,6 +12,11 @@ import (
 
 	"github.com/looplab/fsm"
 )
+
+func init() {
+	// set the log
+	// log.SetOutput(io.Discard)
+}
 
 /*
 Map state
@@ -146,10 +150,18 @@ func (c *Coordinator) ReportTask(input *ReportTaskInput, output *ReportTaskOutpu
 	updateTaskState(tasks, input.TaskID, event)
 	log.Println("[ReportTask]", input.ExecType, input.TaskID, input.State)
 	if areDone(c.mapTasks) && arePending(c.reduceTasks) {
+		// get map complete task id
+		mapTaskIDs := []int{}
+		for _, m := range c.mapTasks {
+			if m.state.Is(StateComplete) {
+				mapTaskIDs = append(mapTaskIDs, m.ID)
+			}
+		}
 		for _, t := range c.reduceTasks {
 			c.queue <- GetTaskOutput{
-				TaskID:   t.ID,
-				ExecType: Reduce,
+				TaskID:     t.ID,
+				ExecType:   Reduce,
+				MapTaskIDs: mapTaskIDs,
 			}
 		}
 	}
@@ -183,7 +195,6 @@ func (c *Coordinator) Done() bool {
 // nReduce is the number of reduce tasks to use.
 func MakeCoordinator(sockname string, files []string, nReduce int) *Coordinator {
 	// Your code here.
-	log.SetOutput(io.Discard)
 	c := Coordinator{
 		mapTasks:      []Task{},
 		reduceTasks:   []Task{},

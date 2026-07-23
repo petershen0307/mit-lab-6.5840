@@ -7,11 +7,15 @@ import (
 	"log"
 	"net/rpc"
 	"os"
-	"regexp"
 	"slices"
 	"strings"
 	"time"
 )
+
+func init() {
+	// set the log
+	// log.SetOutput(io.Discard)
+}
 
 // Map functions return a slice of KeyValue.
 type KeyValue struct {
@@ -92,6 +96,8 @@ type KV struct {
 	V string
 }
 
+const mapIntermediateFile = `mr-%d-%d`
+
 func workerDoMap(getTaskOutput GetTaskOutput, mapf func(string, string) []KeyValue) TaskState {
 	// read the file from getTaskOutput
 	b, err := os.ReadFile(getTaskOutput.FileName)
@@ -107,7 +113,7 @@ func workerDoMap(getTaskOutput GetTaskOutput, mapf func(string, string) []KeyVal
 		return strings.Compare(a.Key, b.Key)
 	})
 	for _, kv := range kvs {
-		fileName := fmt.Sprintf("mr-%d-%d", getTaskOutput.TaskID, ihash(kv.Key)%getTaskOutput.ReduceBuckets)
+		fileName := fmt.Sprintf(mapIntermediateFile, getTaskOutput.TaskID, ihash(kv.Key)%getTaskOutput.ReduceBuckets)
 		if _, ok := intermediateFileWriterMap[fileName]; !ok {
 			f, err := os.OpenFile(fileName, os.O_TRUNC|os.O_CREATE|os.O_WRONLY, os.FileMode(0o666))
 			if err != nil {
@@ -132,22 +138,19 @@ func workerDoMap(getTaskOutput GetTaskOutput, mapf func(string, string) []KeyVal
 func workerDoReduce(getTaskOutput GetTaskOutput, reducef func(string, []string) string) TaskState {
 	// output to mr-out-Y
 	// read all mr-*-Y files
-	dirs, err := os.ReadDir("./")
-	if err != nil {
-		return Failed
+	mapFiles := []string{}
+	for _, mapTaskID := range getTaskOutput.MapTaskIDs {
+		mapFiles = append(mapFiles, fmt.Sprintf(mapIntermediateFile, mapTaskID, getTaskOutput.TaskID))
 	}
 	keyValues := make(map[string][]string)
-	regexStr := fmt.Sprintf(`mr-\d+-%d`, getTaskOutput.TaskID)
-	for _, d := range dirs {
-		if d.IsDir() {
+	for _, fileName := range mapFiles {
+		_, err := os.Stat(fileName)
+		if os.IsNotExist(err) {
 			continue
 		}
-		if b, _ := regexp.MatchString(regexStr, d.Name()); !b {
-			continue
-		}
-		f, err := os.OpenFile(d.Name(), os.O_RDONLY, os.ModePerm)
+		f, err := os.OpenFile(fileName, os.O_RDONLY, os.ModePerm)
 		if err != nil {
-			log.Println("[REDUCE] open file failed", d.Name(), err)
+			log.Println("[REDUCE] open file failed", fileName, err)
 			return Failed
 		}
 		defer f.Close()
