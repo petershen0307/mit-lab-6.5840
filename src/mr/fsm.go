@@ -6,8 +6,7 @@ import (
 
 /*
 	pending -> running -> complete
-				|-> failed
-				|- (timeout) -> pending
+				|-> failed (timeout)
 */
 
 const (
@@ -19,7 +18,6 @@ const (
 	EventGetTask           = "getTask"
 	EventReportTaskSuccess = "reportTaskSuccess"
 	EventReportTaskFailed  = "reportTaskFailed"
-	EventReportTaskTimeout = "reportTaskTimeout"
 )
 
 func newMrFsm() *fsm.FSM {
@@ -27,8 +25,7 @@ func newMrFsm() *fsm.FSM {
 		[]fsm.EventDesc{
 			{Name: EventGetTask, Src: []string{StatePending}, Dst: StateRunning},
 			{Name: EventReportTaskSuccess, Src: []string{StateRunning}, Dst: StateComplete},
-			{Name: EventReportTaskFailed, Src: []string{StateRunning}, Dst: EventReportTaskFailed},
-			{Name: EventReportTaskTimeout, Src: []string{StateRunning}, Dst: StatePending},
+			{Name: EventReportTaskFailed, Src: []string{StateRunning}, Dst: StateFailed},
 		},
 		map[string]fsm.Callback{},
 	)
