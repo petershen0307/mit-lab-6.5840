@@ -112,7 +112,7 @@ func (c *Coordinator) GetTask(input *GetTaskInput, output *GetTaskOutput) error 
 	}
 	if len(c.queue) == 0 {
 		// add the reduce task to queue
-		output = &GetTaskOutput{
+		*output = GetTaskOutput{
 			ExecType: Wait,
 		}
 		return nil

@@ -55,6 +55,7 @@ func Worker(sockname string, mapf func(string, string) []KeyValue,
 			reportTaskInput.State = workerDoReduce(getTaskOutput, reducef)
 		case Wait:
 			time.Sleep(10 * time.Millisecond)
+			continue
 		default:
 			// log.Println("leave")
 			return
