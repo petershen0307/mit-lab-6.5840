@@ -4,10 +4,13 @@ package main
 // see directions in pbc.go
 //
 
-import "time"
-import "6.5840/viewservice"
-import "os"
-import "fmt"
+import (
+	"fmt"
+	"os"
+	"time"
+)
+
+// import "6.5840/viewservice"
 
 func main() {
 	if len(os.Args) != 2 {
@@ -15,7 +18,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	viewservice.StartServer(os.Args[1])
+	// viewservice.StartServer(os.Args[1])
 
 	for {
 		time.Sleep(100 * time.Second)

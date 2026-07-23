@@ -15,12 +15,15 @@ package main
 //   -d directory
 //   -r restart
 
-import "time"
-import "6.5840/diskv"
-import "os"
-import "fmt"
-import "strconv"
-import "runtime"
+import (
+	"fmt"
+	"os"
+	"runtime"
+	"strconv"
+	"time"
+)
+
+// import "6.5840/diskv"
 
 func usage() {
 	fmt.Printf("Usage: diskvd -g gid -m master... -s server... -i my-index -d dir\n")
@@ -64,8 +67,8 @@ func main() {
 
 	runtime.GOMAXPROCS(4)
 
-	srv := diskv.StartServer(gid, masters, replicas, me, dir, restart)
-	srv.Setunreliable(unreliable)
+	// srv := diskv.StartServer(gid, masters, replicas, me, dir, restart)
+	// srv.Setunreliable(unreliable)
 
 	// for safety, force quit after 10 minutes.
 	time.Sleep(10 * 60 * time.Second)

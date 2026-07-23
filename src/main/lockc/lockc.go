@@ -4,9 +4,11 @@ package main
 // see comments in lockd.go
 //
 
-import "6.5840/lockservice"
-import "os"
-import "fmt"
+// import "6.5840/lockservice"
+import (
+	"fmt"
+	"os"
+)
 
 func usage() {
 	fmt.Printf("Usage: lockc -l|-u primaryport backupport lockname\n")
@@ -15,12 +17,12 @@ func usage() {
 
 func main() {
 	if len(os.Args) == 5 {
-		ck := lockservice.MakeClerk(os.Args[2], os.Args[3])
+		// ck := lockservice.MakeClerk(os.Args[2], os.Args[3])
 		var ok bool
 		if os.Args[1] == "-l" {
-			ok = ck.Lock(os.Args[4])
+			// ok = ck.Lock(os.Args[4])
 		} else if os.Args[1] == "-u" {
-			ok = ck.Unlock(os.Args[4])
+			// ok = ck.Unlock(os.Args[4])
 		} else {
 			usage()
 		}

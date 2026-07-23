@@ -18,9 +18,11 @@ package main
 // and restart them to exercise fault tolerance.
 //
 
-import "6.5840/pbservice"
-import "os"
-import "fmt"
+// import "6.5840/pbservice"
+import (
+	"fmt"
+	"os"
+)
 
 func usage() {
 	fmt.Printf("Usage: pbc viewport key\n")
@@ -31,13 +33,13 @@ func usage() {
 func main() {
 	if len(os.Args) == 3 {
 		// get
-		ck := pbservice.MakeClerk(os.Args[1], "")
-		v := ck.Get(os.Args[2])
-		fmt.Printf("%v\n", v)
+		// ck := pbservice.MakeClerk(os.Args[1], "")
+		// v := ck.Get(os.Args[2])
+		// fmt.Printf("%v\n", v)
 	} else if len(os.Args) == 4 {
 		// put
-		ck := pbservice.MakeClerk(os.Args[1], "")
-		ck.Put(os.Args[2], os.Args[3])
+		// ck := pbservice.MakeClerk(os.Args[1], "")
+		// ck.Put(os.Args[2], os.Args[3])
 	} else {
 		usage()
 	}

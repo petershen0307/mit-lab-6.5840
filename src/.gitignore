@@ -1,5 +1,6 @@
 *.*/
 main/mr-tmp/
+mr/mr-tmp*
 mrtmp.*
 824-mrinput-*.txt
 /main/diff.out
@@ -7,11 +8,11 @@ mrtmp.*
 /pbservice/x.txt
 /kvpaxos/x.txt
 *.so
-/main/mrcoordinator
-/main/mrsequential
-/main/mrworker
-/main/kvsrv1d
-/main/raft1d
-/main/rsm1d
-/main/kvraft1d
-/main/shardgrp1d
+/main/mrcoordinator/mrcoordinator
+/main/mrsequential/mrsequential
+/main/mrworker/mrworker
+/main/kvsrv1d/kvsrv1d
+/main/raft1d/raft1d
+/main/rsm1d/rsm1d
+/main/kvraft1d/kvraft1d
+/main/shardgrp1d/shardgrp1d
