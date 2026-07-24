@@ -48,6 +48,10 @@ type Coordinator struct {
 	reduceTasks   []Task
 }
 
+const (
+	timeout = 10 * time.Second
+)
+
 // Your code here -- RPC handlers for the worker to call.
 
 // an example RPC handler.
@@ -100,10 +104,20 @@ func updateTaskState(tasks *[]Task, id int, event string) {
 	for i, t := range *tasks {
 		if t.ID == id {
 			if err := (*tasks)[i].state.Event(context.Background(), event); err != nil {
-				log.Panicln("state machine failed with event", event, "and error", err)
+				log.Panicln("state machine failed with event", event, "and error", err, "state", (*tasks)[i].state.Current())
 			}
+			t.LastUpdatedTime = time.Now().UTC()
 		}
 	}
+}
+
+func findTimeoutTask(tasks []Task) *Task {
+	for _, t := range tasks {
+		if t.state.Is(StateRunning) && time.Since(t.LastUpdatedTime) > timeout {
+			return &t
+		}
+	}
+	return nil
 }
 
 func (c *Coordinator) GetTask(input *GetTaskInput, output *GetTaskOutput) error {
@@ -189,7 +203,46 @@ func (c *Coordinator) Done() bool {
 	// need to check when to add reduce task to queue
 	c.lock.Lock()
 	defer c.lock.Unlock()
-	return len(c.queue) == 0 && areDone(c.reduceTasks) && areDone(c.mapTasks)
+	mapDone := areDone(c.mapTasks)
+	reduceDone := areDone(c.reduceTasks)
+	// check the timeout task
+	if !mapDone {
+		timeoutTask := findTimeoutTask(c.mapTasks)
+		if timeoutTask != nil {
+			updateTaskState(&c.mapTasks, timeoutTask.ID, EventReportTaskFailed)
+			newTask := Task{
+				ID:              len(c.mapTasks),
+				FileName:        timeoutTask.FileName,
+				LastUpdatedTime: time.Now().UTC(),
+				state:           newMrFsm(),
+			}
+			c.mapTasks = append(c.mapTasks, newTask)
+			c.queue <- GetTaskOutput{
+				TaskID:        newTask.ID,
+				ExecType:      Map,
+				FileName:      newTask.FileName,
+				ReduceBuckets: c.reduceBuckets,
+			}
+		}
+	}
+	if mapDone && !reduceDone {
+		timeoutTask := findTimeoutTask(c.reduceTasks)
+		if timeoutTask != nil {
+			updateTaskState(&c.reduceTasks, timeoutTask.ID, EventTaskTimeout)
+			mapTaskIDs := []int{}
+			for _, m := range c.mapTasks {
+				if m.state.Is(StateComplete) {
+					mapTaskIDs = append(mapTaskIDs, m.ID)
+				}
+			}
+			c.queue <- GetTaskOutput{
+				TaskID:     timeoutTask.ID,
+				ExecType:   Reduce,
+				MapTaskIDs: mapTaskIDs,
+			}
+		}
+	}
+	return len(c.queue) == 0 && mapDone && reduceDone
 }
 
 // create a Coordinator.
