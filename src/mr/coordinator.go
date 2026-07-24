@@ -2,6 +2,7 @@ package mr
 
 import (
 	"context"
+	"io"
 	"log"
 	"net"
 	"net/http"
@@ -15,7 +16,8 @@ import (
 
 func init() {
 	// set the log
-	// log.SetOutput(io.Discard)
+	log.SetOutput(io.Discard)
+	log.SetPrefix("[Coordinator]")
 }
 
 /*
@@ -98,7 +100,7 @@ func updateTaskState(tasks *[]Task, id int, event string) {
 	for i, t := range *tasks {
 		if t.ID == id {
 			if err := (*tasks)[i].state.Event(context.Background(), event); err != nil {
-				log.Panicln("[coordinator] state machine failed with event", event, "and error", err)
+				log.Panicln("state machine failed with event", event, "and error", err)
 			}
 		}
 	}

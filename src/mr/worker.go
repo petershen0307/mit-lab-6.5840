@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"fmt"
 	"hash/fnv"
+	"io"
 	"log"
 	"net/rpc"
 	"os"
@@ -14,7 +15,8 @@ import (
 
 func init() {
 	// set the log
-	// log.SetOutput(io.Discard)
+	log.SetOutput(io.Discard)
+	log.SetPrefix("[Worker]")
 }
 
 // Map functions return a slice of KeyValue.
@@ -57,10 +59,10 @@ func Worker(sockname string, mapf func(string, string) []KeyValue,
 			time.Sleep(10 * time.Millisecond)
 			continue
 		default:
-			// log.Println("leave")
+			log.Println("leave")
 			return
 		}
-		// log.Println("[Report]", getTaskOutput.ExecType, getTaskOutput.TaskID)
+		log.Println("Report", getTaskOutput.ExecType, getTaskOutput.TaskID)
 		call("Coordinator.ReportTask", &reportTaskInput, &ReportTaskOutput{})
 	}
 }
